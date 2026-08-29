@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 
 import pandas as pd
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -20,9 +21,13 @@ try:
 except ImportError as exc:  # friendlier classroom failure
     raise SystemExit("great_expectations is not installed. Run: pip install -r requirements.txt") from exc
 
+from src.contract_validator import failed_issues, validate_dataframe
+
 
 def main() -> None:
     df = pd.read_csv(ROOT / "data" / "incoming" / "orders.csv")
+    with open(ROOT / "contracts" / "orders_contract.yaml", encoding="utf-8") as handle:
+        contract = yaml.safe_load(handle)
     context = gx.get_context()
 
     # Use unique names so re-running inside an ephemeral context is simple.
@@ -52,8 +57,25 @@ def main() -> None:
         all_ok = all_ok and bool(result.success)
         print(f"{expectation.__class__.__name__:<40} success={result.success}")
 
-    print("\nStarter GX result:", "PASS" if all_ok else "FAIL")
-    print("TODO: package these expectations into a Suite + ValidationDefinition + Checkpoint + Actions.")
+    # Contract validation supplies the checks that are awkward to express as
+    # dataframe GX expectations (strict type drift and wall-clock freshness).
+    contract_issues = validate_dataframe(df, contract)
+    failures = failed_issues(contract_issues)
+    for issue in failures:
+        print(
+            f"{issue['check']:<40} success=False severity={issue['severity']} "
+            f"action={issue['action']} ({issue['details']})"
+        )
+
+    actions = {issue["action"] for issue in failures}
+    if "quarantine" in actions:
+        print("ACTION quarantine: route invalid data to the quarantine side table")
+    if "warn" in actions:
+        print("ACTION warn: log the issue and continue")
+    if "block" in actions:
+        raise SystemExit("ACTION block: critical contract failure; pipeline stopped")
+
+    print("\nGX + contract result:", "PASS" if all_ok and not failures else "FAIL")
 
 
 if __name__ == "__main__":

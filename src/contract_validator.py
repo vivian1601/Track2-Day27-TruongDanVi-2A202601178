@@ -17,11 +17,19 @@ import pandas as pd
 import yaml
 
 
+DEFAULT_ACTIONS = {
+    "critical": "block",
+    "warning": "quarantine",
+    "info": "warn",
+}
+
+
 def _issue(
     check: str,
     *,
     column: str | None,
     severity: str,
+    action: str,
     passed: bool,
     details: str,
 ) -> dict[str, Any]:
@@ -29,6 +37,7 @@ def _issue(
         "check": check,
         "column": column,
         "severity": severity,
+        "action": action,
         "passed": bool(passed),
         "details": details,
     }
@@ -42,9 +51,11 @@ def load_contract(path: str | Path) -> dict[str, Any]:
 def validate_dataframe(df: pd.DataFrame, contract: dict[str, Any]) -> list[dict[str, Any]]:
     issues: list[dict[str, Any]] = []
     columns = contract.get("columns", {})
+    actions = {**DEFAULT_ACTIONS, **contract.get("actions", {})}
 
     for column, rules in columns.items():
         severity = rules.get("severity", "warning")
+        action = actions.get(severity, "warn")
         required = bool(rules.get("required", False))
 
         if column not in df.columns:
@@ -54,6 +65,7 @@ def validate_dataframe(df: pd.DataFrame, contract: dict[str, Any]) -> list[dict[
                         "required_column",
                         column=column,
                         severity=severity,
+                        action=action,
                         passed=False,
                         details=f"Missing required column: {column}",
                     )
@@ -69,6 +81,7 @@ def validate_dataframe(df: pd.DataFrame, contract: dict[str, Any]) -> list[dict[
                     "not_null",
                     column=column,
                     severity=severity,
+                    action=action,
                     passed=(null_count == 0),
                     details=f"null_count={null_count}",
                 )
@@ -81,6 +94,7 @@ def validate_dataframe(df: pd.DataFrame, contract: dict[str, Any]) -> list[dict[
                     "unique",
                     column=column,
                     severity=severity,
+                    action=action,
                     passed=(duplicate_count == 0),
                     details=f"duplicate_rows={duplicate_count}",
                 )
@@ -95,12 +109,45 @@ def validate_dataframe(df: pd.DataFrame, contract: dict[str, Any]) -> list[dict[
                     "accepted_values",
                     column=column,
                     severity=severity,
+                    action=action,
                     passed=(invalid_count == 0),
                     details=f"invalid_count={invalid_count}; accepted={accepted}",
                 )
             )
 
-        # Starter numeric range support. Type validation is intentionally minimal.
+        declared_type = rules.get("type")
+        non_null = series[series.notna()]
+        if declared_type == "integer":
+            # Accept integral numeric values (including numpy scalars), but reject
+            # booleans and numeric strings so schema drift is not silently coerced.
+            valid_type = non_null.map(
+                lambda value: not isinstance(value, (bool, str))
+                and pd.api.types.is_number(value)
+                and float(value).is_integer()
+            )
+        elif declared_type == "number":
+            valid_type = non_null.map(
+                lambda value: not isinstance(value, (bool, str))
+                and pd.api.types.is_number(value)
+            )
+        elif declared_type == "datetime":
+            valid_type = pd.to_datetime(non_null, errors="coerce", utc=True).notna()
+        else:
+            valid_type = None
+
+        if valid_type is not None:
+            invalid_count = int((~valid_type).sum())
+            issues.append(
+                _issue(
+                    "type",
+                    column=column,
+                    severity=severity,
+                    action=action,
+                    passed=(invalid_count == 0),
+                    details=f"invalid_count={invalid_count}; expected={declared_type}",
+                )
+            )
+
         if "min" in rules or "max" in rules:
             numeric = pd.to_numeric(series, errors="coerce")
             invalid = pd.Series(False, index=series.index)
@@ -114,14 +161,43 @@ def validate_dataframe(df: pd.DataFrame, contract: dict[str, Any]) -> list[dict[
                     "range",
                     column=column,
                     severity=severity,
+                    action=action,
                     passed=(invalid_count == 0),
                     details=f"invalid_count={invalid_count}",
                 )
             )
 
-    # TODO(student): validate contract-level freshness using contract['freshness'].
-    # TODO(student): validate declared data types. pd.to_numeric(..., errors='coerce')
-    #                can silently hide string/type drift if you do not check it explicitly.
+    freshness = contract.get("freshness")
+    if freshness:
+        column = freshness.get("column", "updated_at")
+        severity = freshness.get("severity", "warning")
+        action = actions.get(severity, "warn")
+        max_delay = float(freshness["max_delay_minutes"])
+
+        if column in df.columns:
+            timestamps = pd.to_datetime(df[column], errors="coerce", utc=True)
+            latest = timestamps.max()
+            if pd.isna(latest):
+                passed = False
+                details = "No valid timestamp is available for freshness validation"
+            else:
+                now = pd.Timestamp.now(tz="UTC")
+                delay_minutes = max(0.0, (now - latest).total_seconds() / 60)
+                passed = delay_minutes <= max_delay
+                details = (
+                    f"latest={latest.isoformat()}; delay_minutes={delay_minutes:.2f}; "
+                    f"max_delay_minutes={max_delay:g}"
+                )
+            issues.append(
+                _issue(
+                    "freshness",
+                    column=column,
+                    severity=severity,
+                    action=action,
+                    passed=passed,
+                    details=details,
+                )
+            )
 
     return issues
 
