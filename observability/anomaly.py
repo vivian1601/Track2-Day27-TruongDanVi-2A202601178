@@ -10,8 +10,21 @@ from typing import Any, Iterable
 import numpy as np
 
 
+def _finite_values(values: Iterable[float]) -> np.ndarray:
+    """Return finite numeric observations and ignore missing telemetry."""
+    array = np.asarray(list(values), dtype=float)
+    return array[np.isfinite(array)]
+
+
 def zscore_detector(current: float, history: Iterable[float], threshold: float = 3.0) -> dict[str, Any]:
-    values = np.asarray(list(history), dtype=float)
+    values = _finite_values(history)
+    if not np.isfinite(float(current)):
+        return {
+            "is_anomaly": True,
+            "score": float("inf"),
+            "method": "zscore",
+            "reason": "current_value_is_not_finite",
+        }
     if values.size < 3:
         return {"is_anomaly": False, "score": 0.0, "method": "zscore", "reason": "insufficient_history"}
     mean = float(np.mean(values))
@@ -33,13 +46,26 @@ def mad_detector(current: float, history: Iterable[float], threshold: float = 3.
 
     Students may improve this function and/or use it from auto mode.
     """
-    values = np.asarray(list(history), dtype=float)
+    values = _finite_values(history)
+    if not np.isfinite(float(current)):
+        return {
+            "is_anomaly": True,
+            "score": float("inf"),
+            "method": "mad",
+            "reason": "current_value_is_not_finite",
+        }
     if values.size < 5:
         return {"is_anomaly": False, "score": 0.0, "method": "mad", "reason": "insufficient_history"}
     median = float(np.median(values))
     mad = float(np.median(np.abs(values - median)))
     if mad == 0:
-        return {"is_anomaly": False, "score": 0.0, "method": "mad", "reason": "mad_is_zero_todo"}
+        score = float("inf") if float(current) != median else 0.0
+        return {
+            "is_anomaly": bool(score > threshold),
+            "score": score,
+            "method": "mad",
+            "reason": f"median={median:.3f}, mad=0, threshold={threshold}",
+        }
     modified_z = 0.6745 * abs(float(current) - median) / mad
     return {
         "is_anomaly": bool(modified_z > threshold),
@@ -57,24 +83,45 @@ def detect_anomaly(
     threshold: float = 3.0,
     context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Stable lab API.
+    """Detect a point anomaly, using contextual and robust baselines in auto mode.
 
-    Current starter behavior:
-    - `zscore`: basic z-score.
-    - `mad`: MAD example.
-    - `auto`: still uses naive z-score and ignores context.
-
-    TODO(student): make `auto` context-aware. Useful context keys used by the
-    instructor may include `day_of_week`, `same_segment_history`,
-    `metric_name`, `known_event`, and `trend`.
+    ``same_segment_history`` takes precedence when it contains enough values;
+    this prevents a normal weekend value being compared with weekdays.  MAD is
+    used for sufficiently large samples because one historic incident should
+    not widen the baseline enough to hide the next incident.
     """
     if method == "mad":
         return mad_detector(current, history)
-    if method in {"zscore", "auto"}:
-        result = zscore_detector(current, history, threshold=threshold)
-        if method == "auto":
+    if method == "zscore":
+        return zscore_detector(current, history, threshold=threshold)
+    if method == "auto":
+        context = context or {}
+        original = list(history)
+        segment = context.get("same_segment_history")
+        selected = list(segment) if segment is not None else []
+        used_segment = len(_finite_values(selected)) >= 3
+        baseline = selected if used_segment else original
+
+        if len(_finite_values(baseline)) >= 5:
+            result = mad_detector(current, baseline, threshold=max(3.5, threshold))
+            result["method"] = "auto:mad"
+        else:
+            result = zscore_detector(current, baseline, threshold=threshold)
             result["method"] = "auto:zscore"
-            if context:
-                result["reason"] += "; context_ignored_by_starter=true"
+
+        context_bits = []
+        if used_segment:
+            context_bits.append("same_segment_baseline=true")
+        if context.get("day_of_week") is not None:
+            context_bits.append(f"day_of_week={context['day_of_week']}")
+        if context.get("metric_name"):
+            context_bits.append(f"metric={context['metric_name']}")
+        if context.get("known_event"):
+            # Keep the score for observability, but avoid paging for an explicitly
+            # acknowledged event such as a planned backfill or maintenance window.
+            result["is_anomaly"] = False
+            context_bits.append(f"suppressed_known_event={context['known_event']}")
+        if context_bits:
+            result["reason"] += "; " + "; ".join(context_bits)
         return result
     raise ValueError(f"Unsupported method: {method}")

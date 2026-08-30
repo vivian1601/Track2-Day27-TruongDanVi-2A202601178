@@ -107,17 +107,28 @@ make reset
 
 Xem chi tiết trong `docs/LAB_GUIDE.md`.
 
-Các TODO quan trọng:
+Các hạng mục đã hoàn thiện trong bài nộp:
 
-- `src/contract_validator.py`: type checking, freshness, severity/action.
-- `gx/validate_orders.py`: expectation đơn lẻ → Suite/ValidationDefinition/Checkpoint/Actions.
-- `dbt_project/`: thêm singular data test + dbt unit test cho join/SCD.
-- `observability/anomaly.py`: robust baseline, seasonality, MAD/EWMA.
-- `observability/distribution.py`: distribution drift tốt hơn mean ratio.
+- `src/contract_validator.py`: strict type, reproducible freshness, severity/action.
+- `gx/validate_orders.py`: Suite → ValidationDefinition → Checkpoint + local action routing.
+- `dbt_project/`: singular reconciliation test + native unit test cho join/SCD.
+- `observability/anomaly.py`: same-segment baseline và robust MAD.
+- `observability/distribution.py`: KS statistic + robust location drift.
 - `observability/slo.py`: multi-window burn-rate policy.
-- `observability/lineage.py`: column lineage / OpenLineage optional.
-- `observability/rag_metrics.py`: embedding drift / retrieval metrics optional.
-- `reports/incident_report.md`: incident report cuối lab.
+- `observability/lineage.py`: transitive dataset/column lineage.
+- `observability/rag_metrics.py`: text-length và embedding-norm drift.
+- `reports/incident_report.md`: incident report và recovery checklist.
+
+### Phân biệt dbt data test và unit test
+
+`not_null` và `unique` là **generic data tests**: chúng chạy trên dữ liệu thật đã
+được materialize để phát hiện null hoặc duplicate. Chúng kiểm tra chất lượng và
+giả định của dataset, không cô lập logic SQL bằng input/expected output cố định.
+
+dbt **unit test** dùng một tập fixture nhỏ trong YAML để mock các model đầu vào,
+chạy logic transformation trước khi materialize model, rồi so kết quả thực tế
+với kết quả mong đợi. Unit test SCD của `fct_daily_revenue` tạo hai active
+customer versions cho cùng một customer để đảm bảo join không nhân đôi revenue.
 
 ## 6. Hidden evaluation
 

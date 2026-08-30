@@ -12,7 +12,7 @@ HISTORY = ROOT / "data" / "history" / "metrics_history.csv"
 
 st.set_page_config(page_title="Data Reliability Lab", layout="wide")
 st.title("Data Reliability Game Day")
-st.caption("Starter dashboard - improve it only if it helps incident decisions.")
+st.caption("Operational view: contracts, anomalies, lineage, SLO and response ownership.")
 
 if not REPORT.exists():
     st.warning("Run `make baseline` first to generate reports/latest_metrics.json")
@@ -31,7 +31,16 @@ st.json({
     "row_count_anomaly": report["row_count_anomaly"],
     "kb_text_length_signal": report["kb_text_length_signal"],
     "contract_slo": report["contract_slo"],
+    "burn_policy": report.get("contract_burn_policy", {}),
+    "kb_embedding_norm_signal": report.get("kb_embedding_norm_signal", {}),
 })
+
+slo = report["contract_slo"]
+s1, s2, s3, s4 = st.columns(4)
+s1.metric("SLO target", f"{slo['target'] * 100:.3f}%")
+s2.metric("Burn rate", f"{slo['burn_rate']:.2f}x")
+s3.metric("Budget remaining", f"{slo['remaining_error_budget_fraction'] * 100:.1f}%")
+s4.metric("Incident", report.get("incident_status", "UNKNOWN"))
 
 history = pd.read_csv(HISTORY)
 st.subheader("Historical row count")
@@ -40,4 +49,10 @@ st.line_chart(history.set_index("date")[["row_count"]])
 st.subheader("Example blast radius")
 st.write("stg_orders -> " + " -> ".join(report["sample_blast_radius_from_stg_orders"]))
 
-st.info("TODO: add SLO target, remaining error budget, burn-rate windows, owner/runbook links, and incident status.")
+st.subheader("Response metadata")
+st.write({
+    "owners": report.get("owners", {}),
+    "runbook": report.get("runbook", "docs/LAB_GUIDE.md"),
+    "page": report.get("contract_burn_policy", {}).get("page", False),
+    "severity": report.get("contract_burn_policy", {}).get("severity", "info"),
+})

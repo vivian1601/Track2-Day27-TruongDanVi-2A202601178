@@ -8,9 +8,20 @@ with completed_orders as (
     where status = 'completed'
 ),
 active_customers as (
-    select *
-    from {{ ref('stg_customers') }}
-    where is_active = true
+    -- Protect the fact grain when malformed SCD data contains multiple active
+    -- versions. Only the most recent active version may join to an order.
+    select * exclude (_active_version_rank)
+    from (
+        select
+            *,
+            row_number() over (
+                partition by customer_id
+                order by valid_from desc
+            ) as _active_version_rank
+        from {{ ref('stg_customers') }}
+        where is_active = true
+    )
+    where _active_version_rank = 1
 )
 select
     o.order_date,

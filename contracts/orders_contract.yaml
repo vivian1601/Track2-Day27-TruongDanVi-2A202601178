@@ -2,6 +2,7 @@ dataset: orders
 owner: commerce-data
 freshness:
   column: updated_at
+  reference_column: created_at
   max_delay_minutes: 30
   severity: warning
 actions:

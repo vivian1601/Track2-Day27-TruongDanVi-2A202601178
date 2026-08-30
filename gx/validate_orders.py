@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Small Great Expectations Core 1.21 example.
-
-This file demonstrates the modern dataframe flow with a few expectations.
-Students should extend it into a reusable Expectation Suite / Validation
-Definition / Checkpoint and design actions based on severity.
-"""
+"""Great Expectations 1.21 Suite -> ValidationDefinition -> Checkpoint flow."""
 from __future__ import annotations
 
 import sys
@@ -18,7 +13,7 @@ sys.path.insert(0, str(ROOT))
 
 try:
     import great_expectations as gx
-except ImportError as exc:  # friendlier classroom failure
+except ModuleNotFoundError as exc:  # friendlier classroom failure
     raise SystemExit("great_expectations is not installed. Run: pip install -r requirements.txt") from exc
 
 from src.contract_validator import failed_issues, validate_dataframe
@@ -34,8 +29,7 @@ def main() -> None:
     data_source = context.data_sources.add_pandas("orders_pandas")
     asset = data_source.add_dataframe_asset(name="orders_dataframe")
     batch_definition = asset.add_batch_definition_whole_dataframe("whole_orders")
-    batch = batch_definition.get_batch(batch_parameters={"dataframe": df})
-
+    suite = context.suites.add(gx.ExpectationSuite(name="orders_contract_suite"))
     expectations = [
         gx.expectations.ExpectColumnValuesToNotBeNull(
             column="order_id", severity="critical"
@@ -51,11 +45,25 @@ def main() -> None:
         ),
     ]
 
-    all_ok = True
     for expectation in expectations:
-        result = batch.validate(expectation)
-        all_ok = all_ok and bool(result.success)
-        print(f"{expectation.__class__.__name__:<40} success={result.success}")
+        suite.add_expectation(expectation)
+
+    validation = context.validation_definitions.add(
+        gx.ValidationDefinition(
+            name="orders_contract_validation", data=batch_definition, suite=suite
+        )
+    )
+    checkpoint = context.checkpoints.add(
+        gx.Checkpoint(
+            name="orders_contract_checkpoint",
+            validation_definitions=[validation],
+            actions=[],  # Local lab: severity routing below replaces external notifications.
+            result_format={"result_format": "SUMMARY"},
+        )
+    )
+    checkpoint_result = checkpoint.run(batch_parameters={"dataframe": df})
+    all_ok = bool(checkpoint_result.success)
+    print(f"Checkpoint orders_contract_checkpoint success={all_ok}")
 
     # Contract validation supplies the checks that are awkward to express as
     # dataframe GX expectations (strict type drift and wall-clock freshness).
@@ -76,6 +84,8 @@ def main() -> None:
         raise SystemExit("ACTION block: critical contract failure; pipeline stopped")
 
     print("\nGX + contract result:", "PASS" if all_ok and not failures else "FAIL")
+    if not all_ok or failures:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

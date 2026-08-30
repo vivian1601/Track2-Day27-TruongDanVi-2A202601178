@@ -5,6 +5,7 @@ from typing import Any, Iterable
 import numpy as np
 
 from observability.anomaly import zscore_detector
+from observability.distribution import detect_distribution_shift
 
 
 def approximate_token_lengths(texts: Iterable[str]) -> list[int]:
@@ -29,9 +30,8 @@ def detect_text_length_shift(
 def detect_embedding_norm_shift(
     current_norms: Iterable[float], baseline_norms: Iterable[float]
 ) -> dict[str, Any]:
-    """TODO(student): implement embedding-space drift signal.
-
-    No embedding model is required for the starter lab. Hidden evaluation can
-    feed precomputed norms/similarities through this stable interface.
-    """
-    return {"is_anomaly": False, "score": 0.0, "method": "not_implemented"}
+    """Detect precomputed embedding-norm drift without loading an ML model."""
+    result = detect_distribution_shift(current_norms, baseline_norms)
+    result["metric"] = "embedding_norm_distribution"
+    result["method"] = "embedding_norm:" + result["method"]
+    return result

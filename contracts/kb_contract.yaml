@@ -2,6 +2,7 @@ dataset: kb_documents
 owner: support-ai
 freshness:
   column: published_at
+  reference_column: effective_at
   max_delay_minutes: 60
   severity: warning
 fields:

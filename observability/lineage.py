@@ -30,11 +30,18 @@ def get_downstream_assets(graph: dict[str, list[str]], start: str) -> list[str]:
 def get_column_downstream(
     column_graph: dict[str, list[str]], start_column: str
 ) -> list[str]:
-    """TODO(student): implement column-level traversal.
-
-    Starter returns only direct children, so transitive hidden cases will fail.
-    """
-    return list(column_graph.get(start_column, []))
+    """Return transitive downstream columns in deterministic BFS order."""
+    seen = {start_column}
+    queue: deque[str] = deque([start_column])
+    downstream: list[str] = []
+    while queue:
+        column = queue.popleft()
+        for child in column_graph.get(column, []):
+            if child not in seen:
+                seen.add(child)
+                downstream.append(child)
+                queue.append(child)
+    return downstream
 
 
 def extract_dbt_dataset_graph(manifest_path: str | Path) -> dict[str, list[str]]:
